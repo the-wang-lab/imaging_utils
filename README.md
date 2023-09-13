@@ -1,2 +1,3 @@
-# imaging_utils
-collection of workflows for the analysis of imaging data
+# Imaging utilies
+The workflows are organized in the respective subfolder.
+Please look there for information.
