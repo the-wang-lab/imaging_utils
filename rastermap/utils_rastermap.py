@@ -133,7 +133,7 @@ def smooth_rastermap(f):
 
     return f
 
-def plot_rastermap(f, figsize=(15, 7), path=''):
+def plot_rastermap(f, figsize=(15, 7), title='', path=''):
     '''Plot rastermap with `matplotlib` and optionally save file
 
     Parameters
@@ -151,6 +151,7 @@ def plot_rastermap(f, figsize=(15, 7), path=''):
     ax.pcolormesh(f, cmap='gray_r', vmin=0.3, vmax=0.7)
     ax.set_xlabel('time [frames]')
     ax.set_ylabel('neurons')
+    ax.set_title(title)
 
     # save figure
     if path:
