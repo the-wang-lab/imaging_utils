@@ -84,13 +84,15 @@ def get_trace(folder, trace='F-Fneu', only_cell=True, chan2=False):
 
     return f
 
-def compute_rastermap(f, rastermap_kw={}):
+def compute_rastermap(f, return_cluster=False, rastermap_kw={}):
     '''Computer rastermap and sort neurons acordingly
 
     Parameters
     ----------
     f : np.array
         Fluorescence trace with shape ``n x t``, where `n` is neurons and `t` the frames
+    return_cluster : bool, optional
+        If True, returns array with cluster IDs for each neurons, by default False
     rastermap_kw : dict, optional
         Dictionary of keywoard arguments passed to ``rastermap.Rastermap``, by default {}
 
@@ -98,6 +100,8 @@ def compute_rastermap(f, rastermap_kw={}):
     -------
     f_s : np.array
         Rastermap-sorted array, same shape as `f`
+    clu : np.array, optional
+        Cluster IDs for each neuron, only returned if return_cluster is True
     '''
 
     # call rastermap 
@@ -108,7 +112,12 @@ def compute_rastermap(f, rastermap_kw={}):
     isort = np.argsort(r.embedding[:, 0])
     f_s = f[isort]
 
-    return f_s
+    if return_cluster:
+        clu = r.embedding_clust[isort]
+        return f_s, clu
+    
+    else:
+        return f_s
 
 def smooth_rastermap(f):
     '''Apply smoothing across neurons as done in suite2p
@@ -133,13 +142,16 @@ def smooth_rastermap(f):
 
     return f
 
-def plot_rastermap(f, figsize=(15, 7), title='', path=''):
+def plot_rastermap(f, clu=None, figsize=(15, 7), title='', path=''):
     '''Plot rastermap with `matplotlib` and optionally save file
 
     Parameters
     ----------
     f : np.array
         Fluorescence trace with shape ``n x t``, where `n` is neurons and `t` the frames
+    clu : np.array, optional
+        Cluster ID for each neuron. If not None, additional plots shows cluster composition,
+        by default None
     figsize : tuple, optional
         X and Y dimentions of the figure, by default (15, 7)
     path : str or pathlib.Path, optional
@@ -147,11 +159,37 @@ def plot_rastermap(f, figsize=(15, 7), title='', path=''):
     '''
 
     # plot
-    fig, ax = plt.subplots(figsize=figsize)
+    if clu is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    
+    else:
+        fig, axarr = plt.subplots(figsize=figsize, ncols=2, width_ratios=[2, 1])
+    
+        ax = axarr[1]
+        for c in np.unique(clu):
+            i = np.argwhere(clu == c).flatten()
+            ax.scatter([c for _ in i], i, s=1)
+        ax.margins(y=0)
+        ax.set_xlabel('cluster')
+        ax.set_yticklabels([])
+
+
+        ax = ax.twinx()
+        i, n = np.unique(clu, return_counts=True)
+        ax.bar(i, n)
+        ax.set_ylim(0, np.max(n) * 10)
+        ax.set_yticks([])
+        ax.set_yticklabels([])
+
+        ax = axarr[0]
+
+
     ax.pcolormesh(f, cmap='gray_r', vmin=0.3, vmax=0.7)
     ax.set_xlabel('time [frames]')
     ax.set_ylabel('neurons')
     ax.set_title(title)
+
+    fig.tight_layout()
 
     # save figure
     if path:
