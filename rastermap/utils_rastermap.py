@@ -84,25 +84,31 @@ def get_trace(folder, trace='F-Fneu', only_cell=True, chan2=False):
 
     return f
 
-def compute_rastermap(f, return_cluster=False, rastermap_kw={}):
+def compute_rastermap(f, rastermap_kw={}):
     '''Computer rastermap and sort neurons acordingly
 
     Parameters
     ----------
     f : np.array
         Fluorescence trace with shape ``n x t``, where `n` is neurons and `t` the frames
-    return_cluster : bool, optional
-        If True, returns array with cluster IDs for each neurons, by default False
     rastermap_kw : dict, optional
         Dictionary of keywoard arguments passed to ``rastermap.Rastermap``, by default {}
 
     Returns
     -------
-    f_s : np.array
-        Rastermap-sorted array, same shape as `f`
-    clu : np.array, optional
-        Cluster IDs for each neuron, only returned if return_cluster is True
+    res : dict
+        Dictionary containing interesting parts from rastermap
+
+        f_s : np.array
+            Rastermap-sorted array, same shape as `f`
+        clu : np.array
+            Cluster IDs for each neuron, only returned if return_cluster is True
+        cc : np.array
+            Sorted cluster correlation matrix
     '''
+
+    # dict to collect results
+    res = dict()
 
     # call rastermap 
     r = Rastermap(**rastermap_kw)
@@ -111,13 +117,19 @@ def compute_rastermap(f, return_cluster=False, rastermap_kw={}):
     # sort neurons accoring to rastermap
     isort = np.argsort(r.embedding[:, 0])
     f_s = f[isort]
+    res['f_sorted'] = f_s
 
-    if return_cluster:
-        clu = r.embedding_clust[isort]
-        return f_s, clu
-    
-    else:
-        return f_s
+    # cluster IDs    
+    clu = r.embedding_clust[isort]
+    res['clu_ids'] = clu
+
+    # sorted cluster correlation matrix
+    res['cc_sorted'] = r.cc
+
+    # time traces of cluster centers
+    res['clu_traces'] = r.X_nodes
+
+    return res
 
 def smooth_rastermap(f):
     '''Apply smoothing across neurons as done in suite2p
@@ -142,32 +154,34 @@ def smooth_rastermap(f):
 
     return f
 
-def plot_rastermap(f, clu=None, figsize=(15, 7), title='', path=''):
+def plot_rastermap(f, clu_ids=None, figsize=(15, 7), title='', path=''):
     '''Plot rastermap with `matplotlib` and optionally save file
 
     Parameters
     ----------
     f : np.array
         Fluorescence trace with shape ``n x t``, where `n` is neurons and `t` the frames
-    clu : np.array, optional
+    clu_ids : np.array, optional
         Cluster ID for each neuron. If not None, additional plots shows cluster composition,
         by default None
     figsize : tuple, optional
         X and Y dimentions of the figure, by default (15, 7)
+    title : str, optional
+        Title to place above first axis, by default ''
     path : str or pathlib.Path, optional
         Path to save figure. If not '', figure is saved on final plot closed, by default ''
     '''
 
     # plot
-    if clu is None:
+    if clu_ids is None:
         fig, ax = plt.subplots(figsize=figsize)
     
     else:
         fig, axarr = plt.subplots(figsize=figsize, ncols=2, width_ratios=[2, 1])
     
         ax = axarr[1]
-        for c in np.unique(clu):
-            i = np.argwhere(clu == c).flatten()
+        for c in np.unique(clu_ids):
+            i = np.argwhere(clu_ids == c).flatten()
             ax.scatter([c for _ in i], i, s=1)
         ax.margins(y=0)
         ax.set_xlabel('cluster')
@@ -175,7 +189,7 @@ def plot_rastermap(f, clu=None, figsize=(15, 7), title='', path=''):
 
 
         ax = ax.twinx()
-        i, n = np.unique(clu, return_counts=True)
+        i, n = np.unique(clu_ids, return_counts=True)
         ax.bar(i, n)
         ax.set_ylim(0, np.max(n) * 10)
         ax.set_yticks([])
@@ -188,6 +202,51 @@ def plot_rastermap(f, clu=None, figsize=(15, 7), title='', path=''):
     ax.set_xlabel('time [frames]')
     ax.set_ylabel('neurons')
     ax.set_title(title)
+
+    fig.tight_layout()
+
+    # save figure
+    if path:
+        fig.savefig(path)
+        plt.close(fig)
+
+
+def plot_clusters(clu, cc, figsize=(15, 6), title='', path=''):
+    '''Plot cluster traces and cross-correaltion matrix with `matplotlib` and optionally save file
+
+    Parameters
+    ----------
+    clu : np.array
+        Cluster trace with shape ``n x t``, where `n` is clusters and `t` the frames
+    cc : np.array
+        sorted cluster cross-correlation matrix with shape ``n x n``, where `n` is clusters
+    figsize : tuple, optional
+        X and Y dimentions of the figure, by default (15, 6)
+    title : str, optional
+        Title to place above first axis, by default ''
+    path : str or pathlib.Path, optional
+        Path to save figure. If not '', figure is saved on final plot closed, by default ''
+    '''
+
+    # plot
+    fig, axarr = plt.subplots(figsize=figsize, ncols=2)
+
+    ax = axarr[0]
+    ax.set_box_aspect(.75)
+    ax.pcolormesh(clu, cmap='gray_r', vmin=0.3, vmax=0.7)
+    ax.invert_yaxis()
+
+    ax.set_title(title)
+    ax.set_xlabel('time [frames]')
+    ax.set_ylabel('clusters')
+
+    ax = axarr[1]
+    ax.set_box_aspect(1)
+    arr = cc - np.eye(cc.shape[0])
+    ax.pcolormesh(arr, cmap='viridis')
+    ax.invert_yaxis()
+
+    ax.set_xlabel('cluster')
 
     fig.tight_layout()
 
