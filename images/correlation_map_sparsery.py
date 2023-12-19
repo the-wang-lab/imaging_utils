@@ -22,7 +22,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-from utils import read_tif_files
+from utils import read_tif_files, post_processing_suite2p_gui
 
 from suite2p.detection.sparsedetect import neuropil_subtraction, square_convolution_2d
 from suite2p.detection.utils import temporal_high_pass_filter, standard_deviation_over_time, downsample
@@ -50,9 +50,15 @@ ops = np.load(data_folder / 'ops.npy', allow_pickle=True).item()
 # # Preprocessing steps
 
 # %%
+###########
+## TRIMMING
+
 # trim movie according to ops file (probably due to motion correction)
 x, y = ops['xrange'], ops['yrange']
 trimmed = stack[:, y[0]:y[1], x[0]:x[1]]
+
+###########
+## BINNING
 
 # dynamically choose bin size
 bin_size_frames = ops["nframes"] // ops["nbinned"]
@@ -60,7 +66,6 @@ bin_size_tau = ops["tau"] * ops["fs"]
 
 bin_size = np.max([1, bin_size_frames, bin_size_tau])
 bin_size = int(np.round(bin_size))
-
 
 # drop last frames so that number is divisible by bin_size
 trimmed = trimmed[: trimmed.shape[0] // bin_size * bin_size]
@@ -70,13 +75,21 @@ binned = trimmed.reshape(
     trimmed.shape[0] // bin_size, bin_size, *trimmed.shape[1:]
 ).mean(axis=1)
 
+############
+## FILTERING
+
 # temporal high-pass filter
 mov = temporal_high_pass_filter(mov=binned, width=int(ops['high_pass']))
+
+################
+## NORMALIZATION
 
 # normalize by standard deviation
 mov_std = standard_deviation_over_time(mov, batch_size=ops['batch_size'])
 mov_norm = mov / mov_std
 
+###########
+## NEUROPIL
 # subtract neuropil
 mov = neuropil_subtraction(mov=mov_norm, filter_size=ops["spatial_hp_detect"])
 
@@ -84,6 +97,9 @@ mov = neuropil_subtraction(mov=mov_norm, filter_size=ops["spatial_hp_detect"])
 # # Downsampling and upsampling
 
 # %%
+################
+## DOWN-SAMPLING
+
 # meshgrid for downsampled movie
 _, y, x = mov.shape
 mesh = np.meshgrid(range(x), range(y))
@@ -110,8 +126,11 @@ for _ in range(5):
     grid_down = downsample(grid_down, taper_edge=False)
 
 # note: len(l_grid) == 5, but len(gxy) == 6 in suite2p, but 6th element is never used
+
+#############
+## UPSAMPLING
     
-# upsample again
+# collect upsampled movies
 l_upsampled = []
 
 for mov_down, grid_down in zip(l_mov, l_grid):
@@ -125,6 +144,9 @@ for mov_down, grid_down in zip(l_mov, l_grid):
     up = upsample_model(grid[1, :, 0], grid[0, 0, :])
     l_upsampled.append(up)
 
+
+##################
+## CORRELATION MAP
 v_corr = np.array(l_upsampled).max(axis=0)
 
 
@@ -139,12 +161,15 @@ axmat = axmat.flatten()
 for i, img in enumerate(l_upsampled):
     ax = axmat[i]
 
+    img = post_processing_suite2p_gui(img)
+
     ax.imshow(img, cmap="viridis")
     ax.set_title(f"upsampled from x{i}")
     ax.set_axis_off()
     
 ax = axmat[-1]
-ax.imshow(v_corr, cmap="viridis")
+img = post_processing_suite2p_gui(v_corr)
+ax.imshow(img, cmap="viridis")
 ax.set_title(f"V_corr (max projection)")
 ax.set_axis_off()
 
