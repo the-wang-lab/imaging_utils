@@ -2,11 +2,19 @@ from tifffile import TiffFile
 import numpy as np
 
 
-def read_tif_files(tif_files):
+def read_tif_files(tif_files, sort_suite2p=True):
     """Reads tif files and returns a numpy array of shape (n_frames, X, Y)"""
 
+    if sort_suite2p:
+        print('INFO Sorting TIF files...')
+        tif_ids = np.array([ ''.join(i for i in p.name.split('_')[0] if i.isdigit()) for p in tif_files ]).astype(int)
+        isort = np.argsort(tif_ids)        
+        tif_files = np.array(tif_files)[isort]
+
     stack = []
+    print('INFO Loading TIF files...')
     for tif_file in tif_files:
+        print(f'     {tif_file}')
         with TiffFile(tif_file) as tif:
             # Iteration over pages necessary, 
             # because imread only reads first page for suite2p tif files

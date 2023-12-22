@@ -34,13 +34,10 @@ from scipy.interpolate import RectBivariateSpline
 
 # %%
 # load data
-data_folder = Path('/home/nico/local/data/suite2p_data/dopa/')
+data_folder = Path(r'Z:\Jingyu\2P_Recording\AC918\AC918-20231017\02\axons_v2.0\suite2p\plane0')
 
 # tif files to numpy array
-tif_files = [
-    data_folder / 'file00000_chan0.tif',
-    data_folder / 'file00500_chan0.tif',
-]
+tif_files = [ *data_folder.glob('reg_tif/*.tif') ]
 stack = read_tif_files(tif_files)
 
 # suite2p settings file
