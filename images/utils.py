@@ -1,5 +1,6 @@
 from tifffile import TiffFile
 import numpy as np
+from scipy.ndimage import uniform_filter1d
 
 from suite2p.detection.sparsedetect import neuropil_subtraction, square_convolution_2d
 from suite2p.detection.utils import temporal_high_pass_filter, standard_deviation_over_time, downsample
@@ -60,7 +61,7 @@ def post_processing_suite2p_gui(img_orig):
 
 
 
-def get_vcorr_sparsery(stack, ops, bin_size=None):
+def get_vcorr_sparsery(stack, ops, bin_size=None, high_pass=None, rolling_window=False):
     '''Calculate correlation map `v_corr` as done in `sparsery`
 
     Uses parameters in `ops`. 
@@ -74,6 +75,12 @@ def get_vcorr_sparsery(stack, ops, bin_size=None):
         suite2p ops settings file
     bin_size : int, optional
         If not None, this bin size takes priority, by default None
+    high_pass : int, optional
+        If not None, defines the high pass filter width in bins.
+        If None, choose default high pass filter as `high_pass` / bin size = 50 / 30.
+        By default None
+    rolling_window : bool, optional
+        If True, use rolling mean instead of non-overlapping sliding window, by default False
 
     Returns
     -------
@@ -81,11 +88,6 @@ def get_vcorr_sparsery(stack, ops, bin_size=None):
         Correlation map as defined in `sparsery`
     '''
 
-    x, y = ops['xrange'], ops['yrange']
-    trimmed = stack[:, y[0]:y[1], x[0]:x[1]]
-
-    ###########
-    ## BINNING
 
     # dynamically choose bin size
     if not bin_size:
@@ -94,36 +96,53 @@ def get_vcorr_sparsery(stack, ops, bin_size=None):
 
         bin_size = np.max([1, bin_size_frames, bin_size_tau])
         bin_size = int(np.round(bin_size))
-    print(f'INFO using bin size: {bin_size}')
+    print(f'INFO using bin/window size: {bin_size}')
 
-    # drop last frames so that number is divisible by bin_size
-    trimmed = trimmed[: trimmed.shape[0] // bin_size * bin_size]
+    # scale high pass filter inversely with bin size
+    if not high_pass:
+        if rolling_window:
+            high_pass = ops['high_pass'] * ops['fs']
+        else:
+            high_pass = ops['high_pass'] * ops['fs'] / bin_size
+            high_pass = np.round(high_pass)
+        
+        high_pass = np.max([1, int(high_pass)])
+    print(f'INFO using high pass: {high_pass}')
 
-    # bin movie (non-overlapping sliding window)
-    binned = trimmed.reshape(
-        trimmed.shape[0] // bin_size, bin_size, *trimmed.shape[1:]
-    ).mean(axis=1)
+    ###########
+    ## TRIMMING
+    x, y = ops['xrange'], ops['yrange']
+    trimmed = stack[:, y[0]:y[1], x[0]:x[1]]
+
+    ##########
+    ## BINNING
+    if rolling_window: # for large bin sizes, we want rolling mean
+        print(f'INFO using rolling window with width {bin_size}')
+        mov = uniform_filter1d(trimmed, size=bin_size, axis=0)
+    else: # this is what suite2p is doing
+        # drop last frames so that number is divisible by bin_size
+        trimmed = trimmed[: trimmed.shape[0] // bin_size * bin_size]
+        print(f'INFO binning data to bins of width {bin_size}')
+        mov = trimmed.reshape( # bin movie (non-overlapping sliding window)
+            trimmed.shape[0] // bin_size, bin_size, *trimmed.shape[1:]
+        ).mean(axis=1)
 
     ############
     ## FILTERING
-    # temporal high-pass filter
-    mov = temporal_high_pass_filter(mov=binned, width=int(ops['high_pass']))
+    mov = mov.astype(float) # `temporal_high_pass_filter` requires `mov` to be `float
+    mov = temporal_high_pass_filter(mov=mov, width=high_pass)
 
     ################
     ## NORMALIZATION
-
-    # normalize by standard deviation
     mov_std = standard_deviation_over_time(mov, batch_size=ops['batch_size'])
-    mov_norm = mov / mov_std
+    mov = mov / mov_std
 
     ###########
     ## NEUROPIL
-    # subtract neuropil
-    mov = neuropil_subtraction(mov=mov_norm, filter_size=ops["spatial_hp_detect"])
+    mov = neuropil_subtraction(mov=mov, filter_size=ops["spatial_hp_detect"])
 
     ################
     ## DOWN-SAMPLING
-
     # meshgrid for downsampled movie
     _, y, x = mov.shape
     mesh = np.meshgrid(range(x), range(y))
@@ -152,8 +171,7 @@ def get_vcorr_sparsery(stack, ops, bin_size=None):
     # note: len(l_grid) == 5, but len(gxy) == 6 in suite2p, but 6th element is never used
 
     #############
-    ## UPSAMPLING
-        
+    ## UPSAMPLING 
     # collect upsampled movies
     l_upsampled = []
 
