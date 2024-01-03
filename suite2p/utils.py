@@ -1,7 +1,9 @@
 
 import numpy as np
 from skimage.draw import polygon, ellipse
+from scipy.ndimage.filters import uniform_filter1d
 
+from pathlib import Path
 from read_roi import read_roi_zip
 
 
@@ -57,3 +59,38 @@ def read_imagej_rois(p_roi, res_yx):
         r[i, y, x] = True
 
     return r
+
+
+def rolling_window_bin_file(ops, window_size=1):
+    '''Smooths binary file with rolling average
+
+    1. Loads binary file ops['reg_file']
+    2. Smoothes time axis with uniform_filter1d
+    3. Writes output to ops['reg_file'] after renaming to `orig.bin`
+
+    Parameters
+    ----------
+    ops : dict
+        suite2p ops file
+    window_size : int, optional
+        size for rolling average window, by default 1
+    '''
+        
+    # set up paths
+    p_data = Path(ops['reg_file'])
+    p_out = p_data.parent / "tmp.bin"
+
+    # set up memory-mapped files
+    shape = ops["nframes"], ops["Ly"], ops["Lx"]
+    f_in = np.memmap(p_data, mode='r', dtype='int16', shape=shape)
+    f_out = np.memmap(p_out, mode='w+', dtype='int16', shape=shape)
+
+    # apply filter
+    uniform_filter1d(f_in, window_size, axis=0, output=f_out)
+
+    del f_in, f_out
+
+    # rename data.bin to orig.bin
+    p_data.rename(p_data.parent / "orig.bin")
+    # rename tmp.bin to data.bin
+    p_out.rename(p_data)
