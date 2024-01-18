@@ -3,6 +3,8 @@ import numpy as np
 from scipy.ndimage import uniform_filter1d
 
 from suite2p.detection.sparsedetect import neuropil_subtraction, square_convolution_2d
+from suite2p.detection.denoise import pca_denoise
+from suite2p.detection.detect import bin_movie
 from suite2p.detection.utils import temporal_high_pass_filter, standard_deviation_over_time, downsample
 from scipy.interpolate import RectBivariateSpline
 
@@ -59,9 +61,31 @@ def post_processing_suite2p_gui(img_orig):
 
     return img_proc
 
+def load_data_file(ops, memory_mapped=False):
+    '''Load memory-mapped array from data.bin file
+
+    Parameters
+    ----------
+    ops : dict
+        suite2p ops settings file
+    memory_mapped : bool, optional
+        If True, return memory-mapped file, otherwise load into memory, by default False
+
+    Returns
+    -------
+    arr : numpy.ndarray
+        contents of data.bin file
+    '''
+
+    shape = ops["nframes"], ops["Ly"], ops["Lx"]
+    arr = np.memmap(ops['reg_file'], mode='r', dtype='int16', shape=shape)
+    if not memory_mapped:
+        arr = arr.copy()
+    
+    return arr
 
 
-def get_vcorr_sparsery(stack, ops, bin_size=None, high_pass=None, rolling_window=False):
+def get_vcorr_sparsery(data, ops, bin_size=None, high_pass=None, rolling_window=False):
     '''Calculate correlation map `v_corr` as done in `sparsery`
 
     Uses parameters in `ops`. 
@@ -69,8 +93,8 @@ def get_vcorr_sparsery(stack, ops, bin_size=None, high_pass=None, rolling_window
 
     Parameters
     ----------
-    stack : numpy.ndarray
-        Imaging stack of shape (n_frames, Y, X)
+    data : numpy.ndarray
+        Imaging data of shape (n_frames, Y, X)
     ops : dict
         suite2p ops settings file
     bin_size : int, optional
@@ -88,7 +112,7 @@ def get_vcorr_sparsery(stack, ops, bin_size=None, high_pass=None, rolling_window
         Correlation map as defined in `sparsery`
     '''
 
-
+      
     # dynamically choose bin size
     if not bin_size:
         bin_size_frames = ops["nframes"] // ops["nbinned"]
@@ -109,27 +133,29 @@ def get_vcorr_sparsery(stack, ops, bin_size=None, high_pass=None, rolling_window
         high_pass = np.max([1, int(high_pass)])
     print(f'INFO using high pass: {high_pass}')
 
-    ###########
-    ## TRIMMING
-    x, y = ops['xrange'], ops['yrange']
-    trimmed = stack[:, y[0]:y[1], x[0]:x[1]]
-
     ##########
     ## BINNING
     if rolling_window: # for large bin sizes, we want rolling mean
         print(f'INFO using rolling window with width {bin_size}')
+        x, y = ops['xrange'], ops['yrange']
+        trimmed = data[:, y[0]:y[1], x[0]:x[1]]
         mov = uniform_filter1d(trimmed, size=bin_size, axis=0)
     else: # this is what suite2p is doing
-        # drop last frames so that number is divisible by bin_size
-        trimmed = trimmed[: trimmed.shape[0] // bin_size * bin_size]
+        mov = bin_movie(data, bin_size, yrange=ops['yrange'], xrange=ops['xrange'],
+                        badframes=ops.get("badframes", None))
         print(f'INFO binning data to bins of width {bin_size}')
-        mov = trimmed.reshape( # bin movie (non-overlapping sliding window)
-            trimmed.shape[0] // bin_size, bin_size, *trimmed.shape[1:]
-        ).mean(axis=1)
+
+
+    #########
+    # DENOISE
+    if ops.get("denoise", 1):
+        mov = pca_denoise(
+            mov, block_size=[ops["block_size"][0] // 2, ops["block_size"][1] // 2],
+            n_comps_frac=0.5)
+        print(f'INFO denoising with PCA')
 
     ############
     ## FILTERING
-    mov = mov.astype(float) # `temporal_high_pass_filter` requires `mov` to be `float
     mov = temporal_high_pass_filter(mov=mov, width=high_pass)
 
     ################

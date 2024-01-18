@@ -22,7 +22,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-from utils import read_tif_files, post_processing_suite2p_gui, get_vcorr_sparsery
+from utils import post_processing_suite2p_gui, get_vcorr_sparsery, load_data_file
 
 # %% [markdown]
 # # Load data and settings
@@ -31,15 +31,14 @@ from utils import read_tif_files, post_processing_suite2p_gui, get_vcorr_sparser
 # load data
 data_folder = Path(r'Z:\Jingyu\2P_Recording\AC918\AC918-20231017\02\axons_v2.0\suite2p\plane0')
 
-# tif files to numpy array
-tif_files = [ *data_folder.glob('reg_tif/*.tif') ]
-stack = read_tif_files(tif_files)
-
 # suite2p settings file
 ops = np.load(data_folder / 'ops.npy', allow_pickle=True).item()
 
-# %%
-# Calculate for different bin_size and high_pass
+# load data
+data = load_data_file(ops)
+
+# %% [markdown]
+# # Calculate for different bin_size and high_pass
 
 # %%
 bin_sizes = [ 10, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100]
@@ -48,7 +47,7 @@ high_pass_orig = ops['high_pass']
 vcorrs = []
 for bin_size in bin_sizes:
     ops['high_pass'] = high_pass_orig * 30 / bin_size
-    vcorr = get_vcorr_sparsery(stack, ops, bin_size=bin_size)
+    vcorr = get_vcorr_sparsery(data, ops, bin_size=bin_size)
     vcorrs.append(vcorr)
 
 
