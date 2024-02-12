@@ -2,3 +2,4 @@
 drift_detection/tmp/
 rastermap/plots
 rastermap/tmp_npy
+.ipynb_checkpoints/
