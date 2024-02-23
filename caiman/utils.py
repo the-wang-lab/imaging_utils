@@ -1,7 +1,8 @@
 from pathlib import Path
 from tifffile import imread, imwrite, TiffFile
 import numpy as np
-import mesmerize_core as mc
+
+import caiman as cm
 
 def split_dual_channel_tif(p_tif, p_out):
     """Split scanimage dual-channel tif file into two separate files
@@ -44,39 +45,80 @@ def load_bin(p_root):
     data = np.memmap(p_data, mode='r', dtype='int16', shape=shape)
     return data
 
+def save_data_as_mmap(p_ops):
 
-def run_mesmerize(df):
-    for i, row in df.iterrows():
-        if row["outputs"] is not None: # item has already been run
-            continue # skip
-            
-        process = row.caiman.run()
-        
-        # on Windows you MUST reload the batch dataframe after every iteration because it uses the `local` backend.
-        # this is unnecessary on Linux & Mac
-        # "DummyProcess" is used for local backend so this is automatic
-        if process.__class__.__name__ == "DummyProcess":
-            df = df.caiman.reload_from_disk()
+    ops = np.load(p_ops, allow_pickle=True).item()
+    p_data = p_ops.with_name("data.bin")
+    p_memmap_base = p_data.with_name('memmap_')
 
-def create_batch(p_root):
-    # set up mesmerize
-    mc.set_parent_raw_data_path(p_root)
-    batch_path = mc.get_parent_raw_data_path() / "mesmerize-batch/batch.pickle"
+    # set up memory-mapped files
+    shape = ops["nframes"], ops["Ly"], ops["Lx"]
+    data = np.memmap(p_data, mode='r', dtype='int16', shape=shape, order='C')
 
-    if batch_path.is_file():
-        batch_path.unlink()
-
-    # create a new batch
-    df = mc.create_batch(batch_path)
+    p_memmap = cm.save_memmap(
+        filenames=[data],
+        base_name=str(p_memmap_base), # TODO test this basename
+        order='C', border_to_0=0)
     
-    return df
+    return p_memmap
 
-def load_batch(p_root):
-    # set up mesmerize
-    mc.set_parent_raw_data_path(p_root)
-    batch_path = mc.get_parent_raw_data_path() / "mesmerize-batch/batch.pickle"
+def load_ref_img(p_ops):
+    ops = np.load(p_ops, allow_pickle=True).item()
+    return ops['refImg']
 
-    # to load existing batches use `load_batch()`
-    df = mc.load_batch(batch_path)
+def reshape(arr, dims, num_frames):
+    return np.reshape(arr.T, [num_frames] + list(dims), order='F')
+
+def write_results_tifs(cnmf_estimates, orig, dims, p_out):
+
+    num_frames = orig.shape[1]
+
+    A, C, b, f = cnmf_estimates.A, cnmf_estimates.C, cnmf_estimates.b, cnmf_estimates.f,
+
+    neural_activity = A.astype(np.float32) @ C.astype(np.float32)
+    background = b.astype(np.float32) @ f.astype(np.float32)
+    residual = orig.astype(np.float32) - neural_activity - background
+
+    imwrite(p_out / 'neural_activity.tif', reshape(neural_activity, dims, num_frames))   
+    imwrite(p_out / 'background.tif', reshape(background, dims, num_frames))
+    imwrite(p_out / 'residual.tif', reshape(residual, dims, num_frames))
+
+def save_rois_imagej(cnmf_estimates, dims, perc, p_roi):
+
+    from roifile import ImagejRoi
+    from skimage import measure
+
+    p_roi.unlink(missing_ok=True)
+
+    for i in range(cnmf_estimates.A.shape[1]):
+        img = np.reshape(cnmf_estimates.A[:, i], dims, order='F').toarray()
+        thresh = np.percentile(img[img > 0], perc)
+        xy = measure.find_contours(img, thresh)[0]
+        roi = ImagejRoi.frompoints(list(zip(xy[:, 1], xy[:, 0])))
+        roi.name = str(i)
+        roi.tofile(p_roi)
+
+def run_cnmf(images, parameter_dict, p_out):
     
-    return df
+    # start cluster
+    _, clu, n_proc = cm.cluster.setup_cluster(backend='multiprocessing', n_processes=None, single_thread=False)
+
+    # convert parameter dict to CNMFParams object
+    parameters = cm.source_extraction.cnmf.params.CNMFParams(params_dict=parameter_dict) 
+    
+    # fit model
+    cnmf_model = cm.source_extraction.cnmf.cnmf.CNMF(n_proc, params=parameters, dview=clu)
+    cnmf_fit = cnmf_model.fit(images)
+
+    # refit
+    cnmf_refit = cnmf_fit.refit(images, dview=clu)
+
+    # save
+    cnmf_refit.save(str(p_out / 'cnmf_fit.hdf5'))
+
+    # stop cluster
+    cm.stop_server(dview=clu)
+
+def load_cnmf(p_out):
+    cnmf_refit = cm.source_extraction.cnmf.cnmf.load_CNMF(str(p_out / 'cnmf_fit.hdf5'))
+    return cnmf_refit
