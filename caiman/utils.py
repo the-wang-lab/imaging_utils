@@ -1,6 +1,8 @@
 from pathlib import Path
+import shutil
 from tifffile import imread, imwrite, TiffFile
 import numpy as np
+from scipy.sparse import spdiags
 
 import caiman as cm
 
@@ -122,3 +124,73 @@ def run_cnmf(images, parameter_dict, p_out):
 def load_cnmf(p_out):
     cnmf_refit = cm.source_extraction.cnmf.cnmf.load_CNMF(str(p_out / 'cnmf_fit.hdf5'))
     return cnmf_refit
+
+def trace_per_roi(A, b, C, f, Yr):
+
+    nA2 = np.ravel(np.power(A, 2).sum(0)) if isinstance(A, np.ndarray) else np.ravel(A.power(2).sum(0))
+    nr, _ = C.shape
+
+    Y_r = np.array(spdiags(1 / nA2, 0, nr, nr) *
+                    (A.T * np.matrix(Yr) -
+                    (A.T * np.matrix(b[:, np.newaxis])) * np.matrix(f[np.newaxis]) -
+                    A.T.dot(A) * np.matrix(C)) + C)
+    return Y_r
+
+def create_mock_stat(A, dims):
+    all_keys = ['ypix', 'xpix', 'lam', 'med', 'footprint', 'mrs', 'mrs0', 'compact', 'solidity', 'npix', 'npix_soma', 'soma_crop',
+                 'overlap', 'radius', 'aspect_ratio', 'npix_norm_no_crop', 'npix_norm', 'skew', 'std', 'neuropil_mask']
+
+    A = A.toarray()
+    A = np.reshape(A, [*dims] + [-1])
+    A /= A.max()
+
+    l = []
+    for a in A.T:
+        y, x = np.where(a > 0)
+
+        d = {'xpix': x, 'ypix': y, 'lam': a[y, x],
+            'med': (y.mean(), x.mean()),
+            'radius': (x.max() - x.min())/2,
+            'npix': len(x),
+            }
+        
+        for k in all_keys:
+            if k not in d:
+                d[k] = 0
+
+        l.append(d)
+
+    return np.array(l)
+
+def create_suite2p_files(cnmf_estimates, Yr, p_ops, p_s2p):
+
+    # create folder
+    p_s2p.mkdir(exist_ok=True)
+    
+    # copy ops file
+    shutil.copy(p_ops, p_s2p / 'ops.npy')
+
+    A = cnmf_estimates.A
+    b = cnmf_estimates.b
+    f = cnmf_estimates.f
+    C = cnmf_estimates.C
+
+    # traces in suite2p gui:
+    # deconv: C
+    # raw fluor: Y_r
+    # neuropil: b_r
+    np.save(p_s2p / 'spks.npy', C)
+
+
+    Y_r = trace_per_roi(A, b, C, f, Yr)
+    np.save(p_s2p / 'F.npy', Y_r)
+
+    b_r = trace_per_roi(A, b, C, f, b @ f)
+    np.save(p_s2p / 'Fneu.npy', b_r)
+
+    # most properties in stat.npy are set to 0
+    s = create_mock_stat(A, cnmf_estimates.dims)
+    np.save(p_s2p / 'stat.npy', s)
+
+
+
