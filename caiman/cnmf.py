@@ -156,6 +156,9 @@ utl.write_results_tifs(cnmf_refit.estimates, Yr, dims, p_out)
 # write roi file
 utl.save_rois_imagej(cnmf_refit.estimates, dims, perc=50, p_roi=p_out / 'roi.zip')
 
+# create mock suite2p files
+utl.create_suite2p_files(cnmf_refit.estimates, Yr, p_ops, p_out / 'mock_suite2p')
+
 # %% [markdown]
 # # investigate components with caiman tools
 
@@ -196,3 +199,8 @@ for k in [4, 5, 6]:
 
         # write roi file
         utl.save_rois_imagej(cnmf_refit.estimates, dims, perc=50, p_roi=p_out / 'roi.zip')
+
+        # create mock suite2p files
+        utl.create_suite2p_files(cnmf_refit.estimates, Yr, p_ops, p_out / 'mock_suite2p')
+
+# %%
