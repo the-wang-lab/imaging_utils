@@ -40,11 +40,22 @@ def split_dual_channel_tif(p_tif, p_out):
     imwrite(p_tif_ch2, ch2, metadata={"axes": "TYX", "fps": fps})
 
 
-def load_bin(p_root):
+def load_bin(p_root, crop=False):
+
     p_data = p_root / 'data.bin'
     ops = np.load(p_root / 'ops.npy', allow_pickle=True).item()
     shape = ops["nframes"], ops["Ly"], ops["Lx"]
     data = np.memmap(p_data, mode='r', dtype='int16', shape=shape)
+
+    if crop:
+        x, y = ops["xrange"], ops["yrange"]
+        data = data[:, slice(*y), slice(*x)]
+        print(f"INFO: Cropped to x-range {x} and y-range {y}")
+    
+    bad_frames = ops['badframes']
+    if n := bad_frames.sum():
+        print(f'INFO: found {n} bad frames, but keeping them for now')
+
     return data
 
 def save_data_as_mmap(p_ops):
