@@ -35,7 +35,7 @@ try:
     p_memmap = next(p_ops.parent.glob('memmap_*'))
     print(f'Found memmap file. Using: {p_memmap}')
 except StopIteration:
-    p_memmap = utl.save_data_as_mmap(p_ops)
+    p_memmap = utl.save_data_as_mmap(p_ops, last_frame=5000, crop=True)
 
 # load memory mapped file
 Yr, dims, num_frames = cm.load_memmap(str(p_memmap))
@@ -165,12 +165,36 @@ utl.create_suite2p_files(cnmf_refit.estimates, Yr, p_ops, p_out / 'mock_suite2p'
 # %%
 cnmf_refit.estimates.nb_view_components(img=img_mean, denoised_color='red')
 
+
 # %% [markdown]
 # # Batch mode: loop over parameters
 # This is a template to explore multiple parameter sets for CNMF. It recreates the steps above and saves each result in a separate folder. Make sure to modify `p_out` accordingly.
 
 # %%
-# loop over parameters
+def cnmf_wrapper(folder, parameter_dict):
+
+    # define output folder
+    p_out = p_ops.parent / folder
+    p_out.mkdir(exist_ok=True, parents=True)
+
+    # run CNMF with new parameters
+    utl.run_cnmf(images, parameter_dict, p_out)
+
+    # load again from disk
+    cnmf_refit = utl.load_cnmf(p_out)
+
+    # write tifs
+    utl.write_results_tifs(cnmf_refit.estimates, Yr, dims, p_out)
+
+    # write roi file
+    utl.save_rois_imagej(cnmf_refit.estimates, dims, perc=50, p_roi=p_out / 'roi.zip')
+
+    # create mock suite2p files
+    utl.create_suite2p_files(cnmf_refit.estimates, Yr, p_ops, p_out / 'mock_suite2p')
+
+
+# %%
+# full parameter sweep
 for k in [4, 5, 6]:
     for g in [3, 4, 5]:
         # new parameters
@@ -183,24 +207,33 @@ for k in [4, 5, 6]:
             }
         new_parameter_dict = parameter_dict.copy()
         new_parameter_dict.update(modified_parameters)
-
-        # define output folder
-        p_out = p_ops.parent / f'K_{k}_gSig_{g}'
-        p_out.mkdir(exist_ok=True)
-
-        # run CNMF with new parameters
-        utl.run_cnmf(images, new_parameter_dict, p_out)
-
-        # load again from disk
-        cnmf_refit = utl.load_cnmf(p_out)
-
-        # write tifs
-        utl.write_results_tifs(cnmf_refit.estimates, Yr, dims, p_out)
-
-        # write roi file
-        utl.save_rois_imagej(cnmf_refit.estimates, dims, perc=50, p_roi=p_out / 'roi.zip')
-
-        # create mock suite2p files
-        utl.create_suite2p_files(cnmf_refit.estimates, Yr, p_ops, p_out / 'mock_suite2p')
+        cnmf_wrapper(f'K_{k}_gSig_{g}',  parameter_dict)
 
 # %%
+# selective parameter combinations
+parent_folder = 'parameter_search'
+
+# default
+cnmf_wrapper(f'{parent_folder}/default', parameter_dict)
+
+# 2nd order because visible rise time
+new_parameter_dict = parameter_dict.copy()
+new_parameter_dict['p'] = 2
+cnmf_wrapper(f'{parent_folder}/p_2', new_parameter_dict)
+
+# decay times
+for d in [1, 2, 3]:
+    new_parameter_dict = parameter_dict.copy()
+    new_parameter_dict['decay_time'] = d
+    cnmf_wrapper(f'{parent_folder}/decay_time_{d}', new_parameter_dict)
+# K
+for k in [5, 7, 9]:
+    new_parameter_dict = parameter_dict.copy()
+    new_parameter_dict['K'] = k
+    cnmf_wrapper(f'{parent_folder}/K_{k}', new_parameter_dict)
+
+# baseline nonnegativity
+new_parameter_dict = parameter_dict.copy()
+new_parameter_dict['bas_nonneg'] = False
+cnmf_wrapper(f'{parent_folder}/bas_nonneg_False', new_parameter_dict)
+

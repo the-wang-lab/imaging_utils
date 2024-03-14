@@ -58,7 +58,7 @@ def load_bin(p_root, crop=False):
 
     return data
 
-def save_data_as_mmap(p_ops):
+def save_data_as_mmap(p_ops, first_frame=0, last_frame=-1, crop=True):
 
     ops = np.load(p_ops, allow_pickle=True).item()
     p_data = p_ops.with_name("data.bin")
@@ -67,6 +67,15 @@ def save_data_as_mmap(p_ops):
     # set up memory-mapped files
     shape = ops["nframes"], ops["Ly"], ops["Lx"]
     data = np.memmap(p_data, mode='r', dtype='int16', shape=shape, order='C')
+
+    # select frames
+    data = data[first_frame:last_frame]
+
+    # crop field of view
+    if crop:
+        x, y = ops["xrange"], ops["yrange"]
+        data = data[:, slice(*y), slice(*x)]
+        print(f"INFO: Cropped to x-range {x} and y-range {y}")
 
     p_memmap = cm.save_memmap(
         filenames=[data],
@@ -82,6 +91,11 @@ def load_ref_img(p_ops):
 def reshape(arr, dims, num_frames):
     return np.reshape(arr.T, [num_frames] + list(dims), order='F')
 
+def check_range_int16(arr):
+    min_val_int16 = np.iinfo(np.int16).min
+    max_val_int16 = np.iinfo(np.int16).max
+    return np.all((arr >= min_val_int16) & (arr <= max_val_int16))
+
 def write_results_tifs(cnmf_estimates, orig, dims, p_out):
 
     num_frames = orig.shape[1]
@@ -92,9 +106,18 @@ def write_results_tifs(cnmf_estimates, orig, dims, p_out):
     background = b.astype(np.float32) @ f.astype(np.float32)
     residual = orig.astype(np.float32) - neural_activity - background
 
-    imwrite(p_out / 'neural_activity.tif', reshape(neural_activity, dims, num_frames))   
-    imwrite(p_out / 'background.tif', reshape(background, dims, num_frames))
-    imwrite(p_out / 'residual.tif', reshape(residual, dims, num_frames))
+    def write_tiff(p_tif, arr):
+        arr = reshape(arr, dims, num_frames)
+        if check_range_int16(arr):
+            arr = arr.astype(np.int16)
+        else:
+            print(f"WARNING: Converting to int16 would result in data loss, keeping orignal dtype: {arr.dtype}")
+        imwrite(p_tif, arr)
+
+    write_tiff(p_out / 'neural_activity.tif', neural_activity)
+    write_tiff(p_out / 'background.tif', background)
+    write_tiff(p_out / 'residual.tif', residual)
+
 
 def save_rois_imagej(cnmf_estimates, dims, perc, p_roi):
 
@@ -147,19 +170,27 @@ def trace_per_roi(A, b, C, f, Yr):
                     A.T.dot(A) * np.matrix(C)) + C)
     return Y_r
 
-def create_mock_stat(A, dims):
+def create_mock_stat(A, dims, p_ops):
+
+    ops = np.load(p_ops, allow_pickle=True).item()
+    x0, y0 = ops['xrange'][0], ops['yrange'][0]
+
     all_keys = ['ypix', 'xpix', 'lam', 'med', 'footprint', 'mrs', 'mrs0', 'compact', 'solidity', 'npix', 'npix_soma', 'soma_crop',
                  'overlap', 'radius', 'aspect_ratio', 'npix_norm_no_crop', 'npix_norm', 'skew', 'std', 'neuropil_mask']
 
     A = A.toarray()
-    A = np.reshape(A, [*dims] + [-1])
+    A = np.reshape(A, [*dims] + [-1], order='F')
     A /= A.max()
 
     l = []
     for a in A.T:
-        y, x = np.where(a > 0)
+        x, y = np.where(a > 0)
+        lam = a[x, y]
 
-        d = {'xpix': x, 'ypix': y, 'lam': a[y, x],
+        # back to original coordinates e.g. 512x512
+        x += x0
+        y += y0
+        d = {'xpix': x, 'ypix': y, 'lam': lam,
             'med': (y.mean(), x.mean()),
             'radius': (x.max() - x.min())/2,
             'npix': len(x),
@@ -200,7 +231,7 @@ def create_suite2p_files(cnmf_estimates, Yr, p_ops, p_s2p):
     np.save(p_s2p / 'Fneu.npy', b_r)
 
     # most properties in stat.npy are set to 0
-    s = create_mock_stat(A, cnmf_estimates.dims)
+    s = create_mock_stat(A, cnmf_estimates.dims, p_ops)
     np.save(p_s2p / 'stat.npy', s)
 
 
