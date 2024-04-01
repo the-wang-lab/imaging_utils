@@ -117,8 +117,16 @@ patch_ax.set_title(f'CNMF Patches Width {cnmf_patch_width}, Overlap {cnmf_patch_
 
 # %%
 # define output folder
-p_out = p_ops.parent / 'param_set_1'
+p_out = p_ops.parent / 'K_4_p_2_decay_time_5'
 p_out.mkdir(exist_ok=True)
+
+modified_parameters = {
+    'K': 4,
+    'p': 2,
+    'decay_time': 5,
+    }
+new_parameter_dict = parameter_dict.copy()
+new_parameter_dict.update(modified_parameters)
 
 # %% [markdown]
 # # Run CNMF
